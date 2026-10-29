@@ -4,7 +4,6 @@ import { QRCodeSVG } from 'qrcode.react';
 import { useNavigate } from 'react-router-dom';
 
 export default function TwoFactorSetup() {
-  const [secretKey, setSecretKey] = useState('');
   const [otpauthUrl, setOtpauthUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -13,19 +12,17 @@ export default function TwoFactorSetup() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    axios.get('http://127.0.0.1:8000/api/2fa/setup/')
+    // FIXED: Use withCredentials: true to send HttpOnly cookies instead of localStorage
+   axios.post('http://127.0.0.1:8000/api/auth/2fa/setup/', {}, {
+      withCredentials: true
+    })
       .then(response => {
-        const secret = response.data.secret || "JBSWY3DPEHPK3PXP";
-        const otpUrl = response.data.otpauth_url || `otpauth://totp/MedlifeAI:User?secret=${secret}&issuer=MedlifeAI`;
-        
-        setSecretKey(secret);
-        setOtpauthUrl(otpUrl);
+        setOtpauthUrl(response.data.totp_uri);
         setLoading(false);
       })
       .catch(err => {
         console.error("2FA load error:", err);
-        setSecretKey("JBSWY3DPEHPK3PXP");
-        setOtpauthUrl("otpauth://totp/MedlifeAI:User?secret=JBSWY3DPEHPK3PXP&issuer=MedlifeAI");
+        setError("Failed to load 2FA setup. Please ensure you are logged in.");
         setLoading(false);
       });
   }, []);
@@ -34,16 +31,21 @@ export default function TwoFactorSetup() {
     e.preventDefault();
     setError('');
     try {
-      const response = await axios.post('http://127.0.0.1:8000/api/2fa/verify/', { otp: otpCode });
-      setSuccessMessage(response.data.message || "2FA verified successfully. Please sign in.");
+      // FIXED: Use withCredentials: true instead of localStorage token header
+      const response = await axios.post(
+     'http://127.0.0.1:8000/api/auth/2fa/verify-enable/',
+        { totp_code: otpCode },
+        { withCredentials: true }
+      );
+      setSuccessMessage(response.data.message || "2FA enabled successfully!");
       
-      // Automatically redirect to login page after 1.5 seconds
+      // Automatically redirect to login or dashboard after 1.5 seconds
       setTimeout(() => {
         navigate('/login');
       }, 1500);
     } catch (err) {
       console.error("Verification error:", err);
-      setError("Invalid 6-digit code. Please try again.");
+      setError(err.response?.data?.error || "Invalid 6-digit code. Please try again.");
     }
   };
 
@@ -64,9 +66,8 @@ export default function TwoFactorSetup() {
 
         <div className="flex flex-col items-center justify-center border border-gray-200 rounded-xl p-4 bg-gray-50 mb-6">
           <div className="bg-white p-3 rounded-lg shadow-sm mb-3">
-            <QRCodeSVG value={otpauthUrl} size={180} />
+            {otpauthUrl ? <QRCodeSVG value={otpauthUrl} size={180} /> : <p>Loading QR...</p>}
           </div>
-          <span className="text-xs text-gray-500 font-mono">Key: {secretKey}</span>
         </div>
 
         {error && <p className="text-red-500 text-sm text-center mb-4">{error}</p>}
@@ -82,7 +83,7 @@ export default function TwoFactorSetup() {
               maxLength="6"
               value={otpCode}
               onChange={(e) => setOtpCode(e.target.value)}
-              placeholder="270708"
+              placeholder="123456"
               className="w-full text-center tracking-widest text-lg py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500"
               required
             />

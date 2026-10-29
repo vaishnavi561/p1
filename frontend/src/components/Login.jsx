@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../api/client'; // Import our centralized API client
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -8,6 +9,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [totpCode, setTotpCode] = useState('');
   const [requires2FA, setRequires2FA] = useState(false);
+  const [preAuthToken, setPreAuthToken] = useState('');
   const [setupRequired, setSetupRequired] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState('');
   const [message, setMessage] = useState('');
@@ -16,34 +18,24 @@ export default function Login() {
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    setError('');
-
     try {
-      const payload = { username, password };
-      if (requires2FA) {
-        payload.totp_code = totpCode;
-      }
+      const payload = requires2FA 
+        ? { pre_auth_token: preAuthToken, totp_code: totpCode }
+        : { username, password };
 
-      const res = await axios.post('http://127.0.0.1:8000/api/login/', payload);
+      const response = await axios.post('http://127.0.0.1:8000/api/login/', payload, {
+        withCredentials: true
+      });
 
-      if (res.data.requires_2fa) {
+      if (response.data.requires_2fa) {
         setRequires2FA(true);
-        setSetupRequired(res.data.setup_required);
-        if (res.data.qr_code_url) {
-          setQrCodeUrl(res.data.qr_code_url);
-        }
-        if (res.data.message) {
-          setMessage(res.data.message);
-        }
-        return;
+        setPreAuthToken(response.data.pre_auth_token);
+      } else {
+        // Successful login
+        navigate('/dashboard');
       }
-
-      localStorage.setItem('access_token', res.data.access);
-      localStorage.setItem('username', res.data.username);
-      navigate('/dashboard');
-
     } catch (err) {
-      setError(err.response?.data?.error || "Login failed. Please check your credentials.");
+      setError(err.response?.data?.error || "Login failed.");
     }
   };
 
@@ -130,6 +122,10 @@ export default function Login() {
 
         <div className="text-center mt-6 text-xs text-gray-400">
           Don't have an account? <span onClick={() => navigate('/signup')} className="text-rose-500 hover:underline cursor-pointer font-semibold">Sign up</span>
+        </div>
+
+        <div className="text-center mt-3 text-xs text-gray-500">
+          Having trouble? <a href="mailto:support@onesmarter.com" className="text-rose-400 hover:underline">Contact Support</a>
         </div>
       </div>
     </div>

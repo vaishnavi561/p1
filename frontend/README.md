@@ -1,16 +1,25 @@
-# React + Vite
+# MedLife.ai
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+MedLife.ai is a full-stack family health management and AI consultation application built with Django REST Framework (backend) and React + Tailwind CSS (frontend). It supports family profile tracking, prescription OCR scanning, and secure local/cloud AI medical consultations.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 🚀 Five-Command Setup
 
-## React Compiler
+Run these commands in your terminal to set up and start the application locally:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```bash
+# 1. Clone and navigate to backend
+cd backend
 
-## Expanding the Oxlint configuration
+# 2. Create and activate virtual environment & install dependencies
+python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+# 3. Run database migrations
+python manage.py migrate
+
+# 4. Start the Django backend server
+python manage.py runserver
+
+# 5. In a separate terminal, start the frontend development server
+cd frontend && npm install && npm run dev

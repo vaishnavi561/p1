@@ -26,10 +26,8 @@ export default function ResetPassword() {
       return;
     }
 
-    if (newPassword.length < 6) {
-      setError('Password must be at least 6 characters long.');
-      return;
-    }
+    // P2-15: Removed hardcoded frontend length check (newPassword.length < 6)
+    // Let backend django validator handle all password rules and return 400.
 
     setLoading(true);
 
@@ -44,7 +42,13 @@ export default function ResetPassword() {
         navigate('/');
       }, 3000);
     } catch (err) {
-      setError(err.response?.data?.error || 'Invalid or expired reset link. Please request a new one.');
+      // P2-15: Handle server-side validation error array or string
+      const serverError = err.response?.data?.error;
+      if (Array.isArray(serverError)) {
+        setError(serverError.join(' '));
+      } else {
+        setError(serverError || 'Invalid or expired reset link. Please request a new one.');
+      }
     } finally {
       setLoading(false);
     }

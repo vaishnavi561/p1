@@ -9,27 +9,40 @@ export default function Register() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
+  const handleClose = () => {
+    navigate('/');
+  };
+
   const handleRegister = async (e) => {
     e.preventDefault();
     setError('');
+
     try {
+      // 1. Register the user (Django validates password here)
       await axios.post('http://127.0.0.1:8000/api/register/', {
         username,
         email,
         password
       });
-      alert("Account created successfully! Please sign in.");
-      navigate('/login');
-    } catch (err) {
-      console.warn("Backend registration skipped, proceeding in demo mode.");
-      localStorage.setItem('username', username || 'New User');
-      navigate('/dashboard');
-    }
-  };
 
-  // Close / Back button handler to view Home, Features, Plans, and FAQs
-  const handleClose = () => {
-    navigate('/');
+      // 2. Automatically log them in to establish the secure session cookie
+      await axios.post('http://127.0.0.1:8000/api/login/', {
+        username,
+        password
+      }, { withCredentials: true });
+
+      // 3. Redirect new users directly to mandatory 2FA Setup onboarding
+      navigate('/2fa-setup');
+
+    } catch (err) {
+      // P2-15: Handle server-side validation error array from Django cleanly
+      const serverError = err.response?.data?.error;
+      if (Array.isArray(serverError)) {
+        setError(serverError.join(' '));
+      } else {
+        setError(serverError || "Registration failed. Please try a different username.");
+      }
+    }
   };
 
   return (
@@ -37,9 +50,10 @@ export default function Register() {
       <div className="max-w-md w-full bg-gray-900 border border-gray-800 p-8 rounded-2xl shadow-2xl relative">
         {/* Close Button */}
         <button 
+          type="button"
           onClick={handleClose}
-          className="absolute top-4 right-4 text-gray-400 hover:text-white text-lg font-bold p-1 transition"
-          title="Back to Home / Features"
+          className="absolute top-4 right-4 text-gray-400 hover:text-white text-lg font-bold p-1 transition cursor-pointer"
+          title="Back to Home"
         >
           ✕
         </button>
@@ -93,7 +107,7 @@ export default function Register() {
 
           <button 
             type="submit"
-            className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg transition duration-200 shadow-lg"
+            className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg transition duration-200 shadow-lg cursor-pointer"
           >
             Create Account & Setup 2FA →
           </button>

@@ -1,14 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { useTheme } from '../context/ThemeContext';
+import { parseApiError } from '../utils/errorHandler';
+import Toast from './ui/Toast';
+
+import AiConfigBar from './dashboard/AiConfigBar';
+import MemberSidebar from './dashboard/MemberSidebar';
+import AddMemberForm from './dashboard/AddMemberForm';
+import MemberDetail from './dashboard/MemberDetail';
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { isDarkMode, toggleTheme } = useTheme();
   
   const [hasAgreed, setHasAgreed] = useState(false);
   const [username, setUsername] = useState('');
   const [currentView, setCurrentView] = useState('add-member');
-  const [isDarkMode, setIsDarkMode] = useState(true);
   const [selectedModel, setSelectedModel] = useState('Ollama');
   const [apiKey, setApiKey] = useState('');
   const [isAiConnected, setIsAiConnected] = useState(false);
@@ -18,6 +26,10 @@ export default function Dashboard() {
   
   const [chatHistories, setChatHistories] = useState({});
   const [isAnswering, setIsAnswering] = useState(false);
+
+  // Edit Mode States (P2-04)
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingMemberId, setEditingMemberId] = useState(null);
 
   // Form Fields
   const [firstName, setFirstName] = useState('');
@@ -34,6 +46,10 @@ export default function Dashboard() {
   const [isScanning, setIsScanning] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [error, setError] = useState('');
+
+  // P3-05 Toast States
+  const [toastMessage, setToastMessage] = useState(null);
+  const [toastType, setToastType] = useState('error');
 
   const modelLabel = selectedModel === 'Ollama' ? 'Qwen 1.8B' : selectedModel;
 
@@ -85,7 +101,7 @@ export default function Dashboard() {
       } else {
         setSelectedMember(profiles[0]);
         setCurrentView('profile-detail');
-        profiles.forEach(p => fetchChatHistory(p.id));
+        fetchChatHistory(profiles[0].id);
       }
     } catch (err) {
       console.warn("Could not fetch database profiles. Starting fresh.");
@@ -115,16 +131,28 @@ export default function Dashboard() {
     setIsAiConnected(false);
   };
 
-  const handleConnectAI = () => {
-    if (selectedModel === 'Ollama') {
-      setIsAiConnected(true);
-      return;
+  const handleConnectAI = async () => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const res = await axios.post('http://127.0.0.1:8000/api/models/health/', {
+        model: selectedModel,
+        api_key: apiKey
+      }, { headers });
+
+      if (res.status === 200) {
+        setIsAiConnected(true);
+        setToastMessage(`Successfully connected to ${selectedModel}!`);
+        setToastType('success');
+      }
+    } catch (err) {
+      console.error("AI connection health check failed:", err);
+      const errorStr = parseApiError(err, `Failed to connect to ${selectedModel}. Please check your configuration.`);
+      setToastMessage(errorStr);
+      setToastType('error');
+      setIsAiConnected(false);
     }
-    if (!apiKey.trim()) {
-      alert(`Please enter a valid key for ${selectedModel}.`);
-      return;
-    }
-    setIsAiConnected(true);
   };
 
   const handlePrescriptionScan = async (e) => {
@@ -143,9 +171,14 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       setConditions(res.data.extracted_text || '');
+      setToastMessage("Prescription scanned successfully!");
+      setToastType('success');
     } catch (err) {
       console.error("OCR scan error:", err);
-      setError(err.response?.data?.error || "OCR scan failed.");
+      const errorStr = parseApiError(err, "OCR scan failed.");
+      setError(errorStr);
+      setToastMessage(errorStr);
+      setToastType('error');
     } finally {
       setIsScanning(false);
       e.target.value = ''; 
@@ -158,51 +191,93 @@ export default function Dashboard() {
     setSuccessMessage('');
 
     if (!firstName.trim()) {
-      setError("First name is required.");
-      return;
-    }
-
-    if (familyMembers.length >= 4) {
-      setError("Maximum limit of 4 family members reached.");
+      const msg = "First name is required.";
+      setError(msg);
+      setToastMessage(msg);
+      setToastType('error');
       return;
     }
 
     const storedUser = localStorage.getItem('username') || '';
 
+    let systolic = null;
+    let diastolic = null;
+    if (bloodPressure.includes('/')) {
+      const parts = bloodPressure.split('/');
+      systolic = parseInt(parts[0].trim(), 10) || null;
+      diastolic = parseInt(parts[1].trim(), 10) || null;
+    }
+
     const memberData = {
       username: storedUser,
       name: `${firstName.trim()} ${lastName ? lastName.trim() : ''}`.trim(),
       relation: 'Family Member',
-      age: dob ? new Date().getFullYear() - new Date(dob).getFullYear() : 'N/A',
-      height: height || 'N/A',
-      weight: weight || 'N/A',
-      a1c: a1c || 'N/A',
-      blood_pressure: bloodPressure || 'N/A',
+      date_of_birth: dob || null,
+      height: height ? parseFloat(height) : null,
+      weight: weight ? parseFloat(weight) : null,
+      a1c: a1c ? parseFloat(a1c) : null,
+      bp_systolic: systolic,
+      bp_diastolic: diastolic,
       conditions: conditions.trim() || 'None listed'
     };
 
     try {
-      const res = await axios.post('http://127.0.0.1:8000/api/family-profiles/', memberData);
-      const newMember = res.data; 
-      const updatedList = [...familyMembers, newMember];
-      
-      setFamilyMembers(updatedList);
-      setSelectedMember(newMember);
-      setChatHistories(prev => ({ ...prev, [newMember.id]: [] }));
-      setCurrentView('profile-detail');
-      setSuccessMessage("Profile saved successfully!");
+      if (isEditing) {
+        const res = await axios.patch(`http://127.0.0.1:8000/api/family-profiles/${editingMemberId}/`, memberData, {
+          withCredentials: true
+        });
+        const updatedMember = res.data;
+        
+        setFamilyMembers(familyMembers.map(m => m.id === editingMemberId ? updatedMember : m));
+        setSelectedMember(updatedMember);
+        setCurrentView('profile-detail');
+        setSuccessMessage("Profile updated successfully!");
+        setToastMessage("Profile updated successfully!");
+        setToastType('success');
+      } else {
+        if (familyMembers.length >= 4) {
+          const msg = "Maximum limit of 4 family members reached.";
+          setError(msg);
+          setToastMessage(msg);
+          setToastType('error');
+          return;
+        }
+        const res = await axios.post('http://127.0.0.1:8000/api/family-profiles/', memberData, {
+          withCredentials: true
+        });
+        const newMember = res.data; 
+        const updatedList = [...familyMembers, newMember];
+        
+        setFamilyMembers(updatedList);
+        setSelectedMember(newMember);
+        setChatHistories(prev => ({ ...prev, [newMember.id]: [] }));
+        setCurrentView('profile-detail');
+        setSuccessMessage("Profile saved successfully!");
+        setToastMessage("Profile saved successfully!");
+        setToastType('success');
+      }
 
+      setIsEditing(false);
+      setEditingMemberId(null);
       setFirstName(''); setLastName(''); setDob(''); setGender('');
       setRace(''); setHeight(''); setWeight(''); setA1c(''); setBloodPressure(''); setConditions('');
     } catch (err) {
       console.error("Database save error:", err.response?.data || err);
-      setError(JSON.stringify(err.response?.data) || "Failed to save to database. Please check backend.");
+      const errorStr = parseApiError(err, "Failed to save to database. Please check backend.");
+      setError(errorStr);
+      setToastMessage(errorStr);
+      setToastType('error');
     }
   };
 
   const handleRemoveMember = async (id) => {
+    const confirmed = window.confirm("Are you sure you want to delete this family member profile?");
+    if (!confirmed) return;
+
     try {
-      await axios.delete(`http://127.0.0.1:8000/api/family-profiles/${id}/`);
+      await axios.delete(`http://127.0.0.1:8000/api/family-profiles/${id}/`, {
+        withCredentials: true
+      });
       const filtered = familyMembers.filter(m => m.id !== id);
       setFamilyMembers(filtered);
       
@@ -211,6 +286,9 @@ export default function Dashboard() {
         delete copy[id];
         return copy;
       });
+
+      setToastMessage("Profile deleted successfully.");
+      setToastType('success');
 
       if (filtered.length > 0) {
         setSelectedMember(filtered[0]);
@@ -221,8 +299,33 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error("Failed to delete member:", err);
-      setError("Failed to delete member from database.");
+      const errorStr = parseApiError(err, "Failed to delete member from database.");
+      setError(errorStr);
+      setToastMessage(errorStr);
+      setToastType('error');
     }
+  };
+
+  const handleOpenEdit = (member) => {
+    setIsEditing(true);
+    setEditingMemberId(member.id);
+    
+    const nameParts = (member.name || '').split(' ');
+    setFirstName(nameParts[0] || '');
+    setLastName(nameParts.slice(1).join(' ') || '');
+    
+    setDob(member.date_of_birth || '');
+    setHeight(member.height || '');
+    setWeight(member.weight || '');
+    setA1c(member.a1c || '');
+    setBloodPressure(
+      member.bp_systolic && member.bp_diastolic 
+        ? `${member.bp_systolic}/${member.bp_diastolic}` 
+        : ''
+    );
+    setConditions(member.conditions || '');
+    
+    setCurrentView('add-member');
   };
 
   const handleSendMessage = async (e) => {
@@ -251,14 +354,33 @@ export default function Dashboard() {
         api_key: apiKey        
       });
       
-      const updatedWithAI = [...newMessages, { sender: 'ai', text: res.data.response }];
+      const aiText = res.data.response;
+      const remaining = res.data.remaining_quota;
+      
+      const updatedWithAI = [...newMessages, { sender: 'ai', text: aiText }];
       setChatHistories(prev => ({
         ...prev,
         [currentMemberId]: updatedWithAI
       }));
+
+      if (remaining !== undefined) {
+        console.log(`Remaining quota for member: ${remaining}`);
+      }
+
     } catch (err) {
-      console.warn("Backend chat failed.");
-      const updatedWithError = [...newMessages, { sender: 'ai', text: `[Error]: Could not reach backend AI endpoint.` }];
+      console.warn("Backend chat failed.", err);
+      
+      let errorText = "[Error]: Could not reach backend AI endpoint.";
+      if (err.response && err.response.status === 429) {
+        errorText = "[Limit Reached]: You have reached the maximum question limit (100) for this profile.";
+      } else {
+        errorText = parseApiError(err, errorText);
+      }
+
+      setToastMessage(errorText);
+      setToastType('error');
+
+      const updatedWithError = [...newMessages, { sender: 'ai', text: errorText }];
       setChatHistories(prev => ({
         ...prev,
         [currentMemberId]: updatedWithError
@@ -282,15 +404,15 @@ export default function Dashboard() {
 
   if (!hasAgreed) {
     return (
-      <div className={`min-h-screen flex items-center justify-center p-4 transition-colors duration-200 ${isDarkMode ? 'bg-gray-950 text-gray-100' : 'bg-rose-50/50 text-gray-900'}`}>
-        <div className={`max-w-2xl w-full p-10 rounded-3xl shadow-xl text-center border transition-colors duration-200 ${isDarkMode ? 'bg-gray-900 border-gray-800 text-gray-100' : 'bg-white border-rose-200 text-gray-900'}`}>
+      <div className="min-h-screen flex items-center justify-center p-4 bg-rose-50/50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 transition-colors duration-200">
+        <div className="max-w-2xl w-full p-10 rounded-3xl shadow-xl text-center border bg-white dark:bg-gray-900 border-rose-200 dark:border-gray-800 text-gray-900 dark:text-gray-100 transition-colors duration-200">
           <div className="w-16 h-16 bg-rose-500/10 text-rose-500 rounded-2xl flex items-center justify-center mx-auto mb-6 text-3xl">
             💚
           </div>
           <h2 className="text-3xl font-extrabold mb-2">Welcome to MedLife.ai</h2>
-          <p className={`text-xs mb-8 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Your intelligent medical companion dashboard</p>
+          <p className="text-xs mb-8 text-gray-500 dark:text-gray-400">Your intelligent medical companion dashboard</p>
 
-          <div className={`p-6 rounded-2xl text-left mb-8 border shadow-sm ${isDarkMode ? 'bg-amber-950/20 border-amber-800/40 text-amber-200/90' : 'bg-amber-50/70 border-amber-200/60 text-amber-950'}`}>
+          <div className="p-6 rounded-2xl text-left mb-8 border shadow-sm bg-amber-50/70 dark:bg-amber-950/20 border-amber-200/60 dark:border-amber-800/40 text-amber-950 dark:text-amber-200/90">
             <div className="text-xs font-bold uppercase tracking-wider mb-2 flex items-center">
               <span>⚠️</span> <span className="ml-2">Medical Disclaimer</span>
             </div>
@@ -308,7 +430,7 @@ export default function Dashboard() {
             </button>
             <button 
               onClick={handleCancelLogout}
-              className={`px-6 py-3.5 font-semibold text-xs transition ${isDarkMode ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900'}`}
+              className="px-6 py-3.5 font-semibold text-xs transition text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
             >
               Cancel / Logout
             </button>
@@ -319,263 +441,87 @@ export default function Dashboard() {
   }
 
   return (
-    <div className={`h-screen overflow-hidden flex ${isDarkMode ? 'bg-gray-950 text-gray-100' : 'bg-rose-50/30 text-gray-900'}`}>
+    <div className="h-screen overflow-hidden flex bg-rose-50/30 dark:bg-gray-950 text-gray-900 dark:text-gray-100">
       
-      {/* Sidebar */}
-      <div className={`w-64 border-r flex flex-col justify-between h-full shrink-0 transition-colors duration-200 ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-rose-200'}`}>
-        <div className="p-4 overflow-y-auto flex-1">
-          <div className="flex items-center space-x-2 mb-8 px-2">
-            <span className="text-xl font-bold text-rose-600">medlife.ai</span>
-          </div>
-          <div className="space-y-1">
-            <button 
-              onClick={() => setCurrentView(familyMembers.length > 0 ? 'profile-detail' : 'add-member')}
-              className={`w-full flex items-center px-3 py-2 text-sm rounded-lg transition ${currentView === 'dashboard' || currentView === 'profile-detail' ? (isDarkMode ? 'text-white bg-gray-800' : 'text-rose-900 bg-rose-50 font-semibold') : (isDarkMode ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900')}`}
-            >
-              Family profiles <span className={`ml-auto text-xs px-2 py-0.5 rounded-full ${isDarkMode ? 'bg-gray-800 text-gray-300' : 'bg-rose-100 text-rose-700'}`}>{familyMembers.length}/4</span>
-            </button>
-
-            {familyMembers.map((member) => (
-              <div 
-                key={member.id}
-                onClick={() => { 
-                  setSelectedMember(member); 
-                  setCurrentView('profile-detail'); 
-                  if (!chatHistories[member.id]) {
-                    fetchChatHistory(member.id);
-                  }
-                }}
-                className={`flex items-center space-x-3 px-3 py-2 rounded-xl cursor-pointer mt-2 border transition ${selectedMember?.id === member.id ? (isDarkMode ? 'bg-gray-800 border-rose-500/50' : 'bg-rose-50 border-rose-300') : (isDarkMode ? 'hover:bg-gray-800/50 border-gray-800' : 'hover:bg-gray-50 border-rose-200')}`}
-              >
-                <div className="w-8 h-8 rounded-full bg-rose-600 text-white flex items-center justify-center font-bold text-xs">
-                  {getInitials(member.name)}
-                </div>
-                <div className="overflow-hidden">
-                  <div className="text-xs font-semibold truncate">{member.name}</div>
-                  <div className="text-[10px] text-gray-400">{getMemberQuestionCount(member.id)} questions asked</div>
-                </div>
-              </div>
-            ))}
-
-            {familyMembers.length < 4 ? (
-              <button 
-                onClick={() => setCurrentView('add-member')}
-                className={`w-full flex items-center px-3 py-2 text-sm font-semibold rounded-lg transition mt-3 ${currentView === 'add-member' ? 'text-rose-600 bg-rose-500/10 border border-rose-500/30' : (isDarkMode ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900')}`}
-              >
-                + Add family member
-              </button>
-            ) : (
-              <div className="text-[11px] text-amber-500 px-3 py-2 mt-3 bg-amber-500/10 rounded-lg text-center font-medium">
-                Maximum limit of 4 profiles reached.
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className={`p-4 border-t shrink-0 ${isDarkMode ? 'border-gray-800 bg-gray-900' : 'border-rose-200 bg-white'}`}>
-          <div className={`text-xs truncate mb-1 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>{username}</div>
-          <button onClick={handleCancelLogout} className="text-xs text-rose-600 hover:underline flex items-center font-semibold cursor-pointer">Sign out</button>
-        </div>
-      </div>
+      <MemberSidebar 
+        familyMembers={familyMembers}
+        selectedMember={selectedMember}
+        onSelectMember={(member, view) => {
+          if (member) setSelectedMember(member);
+          setCurrentView(view);
+          if (member && !chatHistories[member.id]) {
+            fetchChatHistory(member.id);
+          }
+        }}
+        currentView={currentView}
+        onOpenAddMember={() => {
+          setIsEditing(false);
+          setEditingMemberId(null);
+          setFirstName(''); setLastName(''); setDob(''); setGender('');
+          setRace(''); setHeight(''); setWeight(''); setA1c(''); setBloodPressure(''); setConditions('');
+          setCurrentView('add-member');
+        }}
+        onLogout={handleCancelLogout}
+        onNavigate2FA={() => navigate('/2fa-setup')}
+        username={username}
+        getInitials={getInitials}
+        getMemberQuestionCount={getMemberQuestionCount}
+      />
 
       <div className="flex-1 flex flex-col h-screen overflow-y-auto">
-        <div className={`sticky top-0 z-50 border-b px-6 py-4 flex justify-between items-center shadow-lg transition-colors duration-200 ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-rose-200'}`}>
-          <h1 className={`text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>Health dashboard</h1>
+        <AiConfigBar 
+          selectedModel={selectedModel}
+          onModelChange={handleModelChange}
+          apiKey={apiKey}
+          onApiKeyChange={handleApiKeyChange}
+          isAiConnected={isAiConnected}
+          onConnectAI={handleConnectAI}
+          isDarkMode={isDarkMode}
+          toggleTheme={toggleTheme}
+        />
 
-          <div className="flex items-center space-x-3">
-            <div className={`flex items-center space-x-3 px-3 py-2 rounded-xl shadow-md border transition-colors duration-200 ${isDarkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-rose-50/50 border-rose-200 text-gray-800'}`}>
-              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">AI CONFIG</span>
-              <select value={selectedModel} onChange={handleModelChange} className={`text-xs px-2.5 py-1.5 rounded-lg border focus:outline-none focus:ring-2 focus:ring-rose-500 ${isDarkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-white text-gray-800 border-rose-300'}`}>
-                <option value="Ollama">Ollama (Local)</option>
-                <option value="Gemini">Gemini</option>
-                <option value="Claude">Claude</option>
-                <option value="OpenAI">OpenAI</option>
-              </select>
-              {selectedModel === 'Ollama' ? (
-                <span className="text-xs text-emerald-400 font-semibold px-2 py-1 bg-emerald-950/50 border border-emerald-800 rounded-lg">qwen:1.8b (Local)</span>
-              ) : (
-                <input type="password" value={apiKey} onChange={handleApiKeyChange} placeholder={`Enter ${selectedModel} Key`} className={`text-xs px-2.5 py-1.5 rounded-lg border focus:outline-none w-36 ${isDarkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-white text-gray-800 border-rose-300'}`} />
-              )}
-              
-              <button 
-                onClick={handleConnectAI} 
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer ${
-                  isAiConnected 
-                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20 shadow-md' 
-                    : 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/20 shadow-md'
-                }`}
-              >
-                {isAiConnected ? 'Connected' : 'Connect'}
-              </button>
-            </div>
-            <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-2.5 rounded-xl border transition shadow-md flex items-center justify-center ${isDarkMode ? 'bg-gray-800 border-gray-700 text-yellow-400' : 'bg-white border-rose-200 text-gray-700'}`}>{isDarkMode ? '☀️' : '🌙'}</button>
-          </div>
-        </div>
-
-        <div className={`flex-1 p-8 transition-colors duration-200 ${isDarkMode ? 'bg-gray-950 text-gray-100' : 'bg-rose-50/30 text-gray-900'}`}>
+        <div className="flex-1 p-8 transition-colors duration-200 bg-rose-50/30 dark:bg-gray-950 text-gray-900 dark:text-gray-100">
           {currentView === 'add-member' && (
-            <div className={`max-w-xl mx-auto border p-8 rounded-2xl shadow-2xl relative my-6 ${isDarkMode ? 'bg-gray-900 border-gray-800 text-gray-100' : 'bg-white border-rose-200 text-gray-900'}`}>
-              <h2 className={`text-2xl font-bold mb-1 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Add a family member</h2>
-              <p className={`text-xs mb-6 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>These details help the assistant give answers that fit the person. ({familyMembers.length}/4 added)</p>
-              
-              {error && <p className="text-red-400 text-sm mb-4 bg-red-950/50 p-3 rounded-lg">{error}</p>}
-              {successMessage && <p className="text-green-400 text-sm mb-4 bg-green-950/50 p-3 rounded-lg">{successMessage}</p>}
-
-              {familyMembers.length >= 4 ? (
-                <div className="p-4 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-xl text-xs text-center">
-                  You have reached the maximum limit of 4 family members. Remove an existing member to add a new one.
-                </div>
-              ) : (
-                <form onSubmit={handleAddMember} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className={`block text-xs font-semibold uppercase mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>First name *</label>
-                      <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} className={`w-full px-3 py-2 border rounded-lg text-sm ${isDarkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-rose-200'}`} required />
-                    </div>
-                    <div>
-                      <label className={`block text-xs font-semibold uppercase mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Last name</label>
-                      <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} className={`w-full px-3 py-2 border rounded-lg text-sm ${isDarkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-rose-200'}`} />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className={`block text-xs font-semibold uppercase mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Date of birth</label>
-                      <input type="date" value={dob} onChange={(e) => setDob(e.target.value)} className={`w-full px-3 py-2 border rounded-lg text-sm ${isDarkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-rose-200'}`} />
-                    </div>
-                    <div>
-                      <label className={`block text-xs font-semibold uppercase mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Gender</label>
-                      <select value={gender} onChange={(e) => setGender(e.target.value)} className={`w-full px-3 py-2 border rounded-lg text-sm ${isDarkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-rose-200'}`}>
-                        <option value="">Select</option>
-                        <option value="Male">Male</option>
-                        <option value="Female">Female</option>
-                        <option value="Other">Other</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className={`block text-xs font-semibold uppercase mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Race / ethnicity</label>
-                      <input type="text" value={race} onChange={(e) => setRace(e.target.value)} placeholder="e.g. Asian Indian" className={`w-full px-3 py-2 border rounded-lg text-sm ${isDarkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-rose-200'}`} />
-                    </div>
-                    <div>
-                      <label className={`block text-xs font-semibold uppercase mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Height</label>
-                      <input type="text" value={height} onChange={(e) => setHeight(e.target.value)} placeholder="e.g. 5.8ft" className={`w-full px-3 py-2 border rounded-lg text-sm ${isDarkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-rose-200'}`} />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className={`block text-xs font-semibold uppercase mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Weight</label>
-                      <input type="text" value={weight} onChange={(e) => setWeight(e.target.value)} placeholder="e.g. 68kg" className={`w-full px-3 py-2 border rounded-lg text-sm ${isDarkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-rose-200'}`} />
-                    </div>
-                    <div>
-                      <label className={`block text-xs font-semibold uppercase mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>A1C (%)</label>
-                      <input type="text" value={a1c} onChange={(e) => setA1c(e.target.value)} placeholder="e.g. 5.6" className={`w-full px-3 py-2 border rounded-lg text-sm ${isDarkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-rose-200'}`} />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className={`block text-xs font-semibold uppercase mb-1 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Blood pressure</label>
-                    <input type="text" value={bloodPressure} onChange={(e) => setBloodPressure(e.target.value)} placeholder="e.g. 120/80" className={`w-full px-3 py-2 border rounded-lg text-sm ${isDarkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-rose-200'}`} />
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <label className={`block text-xs font-semibold uppercase ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Medicines or conditions</label>
-                      <label className="text-xs text-rose-600 hover:underline cursor-pointer font-semibold">
-                        {isScanning ? "Scanning..." : "Scan Prescription"}
-                        <input type="file" accept="image/*" className="hidden" onChange={handlePrescriptionScan} />
-                      </label>
-                    </div>
-                    <textarea value={conditions} onChange={(e) => setConditions(e.target.value)} placeholder="Metformin, Vitamin D3" className={`w-full px-3 py-2 border rounded-lg text-sm ${isDarkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-rose-200'}`} rows="3" />
-                  </div>
-
-                  <button type="submit" className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg mt-4 shadow-md shadow-rose-600/20 cursor-pointer">Add member →</button>
-                </form>
-              )}
-            </div>
+            <AddMemberForm 
+              isEditing={isEditing}
+              error={error}
+              successMessage={successMessage}
+              onSubmit={handleAddMember}
+              firstName={firstName} setFirstName={setFirstName}
+              lastName={lastName} setLastName={setLastName}
+              dob={dob} setDob={setDob}
+              gender={gender} setGender={setGender}
+              race={race} setRace={setRace}
+              height={height} setHeight={setHeight}
+              weight={weight} setWeight={setWeight}
+              a1c={a1c} setA1c={setA1c}
+              bloodPressure={bloodPressure} setBloodPressure={setBloodPressure}
+              conditions={conditions} setConditions={setConditions}
+              isScanning={isScanning}
+              onPrescriptionScan={handlePrescriptionScan}
+            />
           )}
 
           {currentView === 'profile-detail' && selectedMember && (
-            <div className="max-w-4xl mx-auto space-y-6">
-              {/* Profile Header Box with Pinkish Border in Light Mode */}
-              <div className={`p-6 rounded-2xl border shadow-lg flex justify-between items-center ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-rose-200'}`}>
-                <div className="flex items-center space-x-4">
-                  <div className="w-14 h-14 rounded-full bg-rose-600 text-white flex items-center justify-center font-bold text-lg shadow-md">
-                    {getInitials(selectedMember.name)}
-                  </div>
-                  <div>
-                    <h2 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{selectedMember.name}</h2>
-                    <p className="text-xs text-gray-400">Relation: {selectedMember.relation} | Age: {selectedMember.age}</p>
-                  </div>
-                </div>
-                <button onClick={() => handleRemoveMember(selectedMember.id)} className="px-4 py-2 border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 rounded-xl text-xs font-semibold transition cursor-pointer">🗑️ Remove</button>
-              </div>
-
-              {/* Stat Boxes (A1C, BP, Weight, Height, Age) with Pinkish Border in Light Mode */}
-              <div className="grid grid-cols-5 gap-4">
-                {[
-                  { label: 'A1C', value: selectedMember.a1c },
-                  { label: 'Blood pressure', value: selectedMember.blood_pressure },
-                  { label: 'Weight', value: selectedMember.weight },
-                  { label: 'Height', value: selectedMember.height },
-                  { label: 'Age', value: selectedMember.age },
-                ].map((stat, idx) => (
-                  <div key={idx} className={`p-4 rounded-xl border shadow-md ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-rose-200'}`}>
-                    <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1">{stat.label}</div>
-                    <div className={`text-sm font-bold ${stat.value === 'N/A' ? 'text-gray-400' : (isDarkMode ? 'text-white' : 'text-gray-800')}`}>{stat.value}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Medicines & Conditions Box with Pinkish Border in Light Mode */}
-              <div className={`p-6 rounded-2xl border shadow-md ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-rose-200'}`}>
-                <div className="text-xs font-semibold text-rose-600 uppercase tracking-wider mb-2 flex items-center space-x-1">
-                  <span>💊</span> <span>Medicines & conditions</span>
-                </div>
-                <div className={`text-sm ${selectedMember.conditions === 'None listed' ? 'text-gray-400 italic' : (isDarkMode ? 'text-gray-200' : 'text-gray-800')}`}>{selectedMember.conditions}</div>
-              </div>
-
-              {/* AI Chat Box with Pinkish Border in Light Mode */}
-              <div className={`p-6 rounded-2xl border shadow-lg ${isDarkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-rose-200'}`}>
-                <div className="flex justify-between items-center mb-6 border-b pb-4 border-gray-800">
-                  <div className="flex items-center space-x-2">
-                    <span className="w-8 h-8 rounded-full bg-rose-500/10 text-rose-600 flex items-center justify-center font-bold">✨</span>
-                    <div className="text-left">
-                      <h3 className={`text-sm font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Ask medlife.ai ({modelLabel})</h3>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-4 mb-6 max-h-96 overflow-y-auto pr-2">
-                  {activeMessages.map((msg, index) => (
-                    <div key={index} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-lg p-3.5 rounded-2xl text-sm ${msg.sender === 'user' ? 'bg-rose-600 text-white rounded-br-none' : (isDarkMode ? 'bg-gray-800 text-gray-100 rounded-bl-none border border-gray-700' : 'bg-rose-50 text-gray-800 rounded-bl-none border border-rose-200')}`}>
-                        <div className="text-[10px] font-semibold opacity-70 mb-1">{msg.sender === 'user' ? 'You' : `MedlifeAI Database + ${modelLabel}`}</div>
-                        {msg.text}
-                      </div>
-                    </div>
-                  ))}
-                  {isAnswering && (
-                    <div className="flex justify-start">
-                      <div className={`p-3 rounded-2xl text-xs italic ${isDarkMode ? 'bg-gray-800 text-gray-400' : 'bg-rose-100 text-rose-700'}`}>
-                        Querying database & {modelLabel}...
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <form onSubmit={handleSendMessage} className="flex items-center space-x-2 pt-2">
-                  <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder={`Ask a question about ${selectedMember.name}...`} className={`flex-1 px-4 py-3 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-rose-500 ${isDarkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-rose-200 text-gray-900'}`} disabled={activeQuestionCount >= 100} />
-                  <button type="submit" disabled={isAnswering} className="px-5 py-3 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-sm rounded-xl cursor-pointer">Send →</button>
-                </form>
-              </div>
-            </div>
+            <MemberDetail 
+              selectedMember={selectedMember}
+              getInitials={getInitials}
+              onOpenEdit={handleOpenEdit}
+              onRemoveMember={handleRemoveMember}
+              modelLabel={modelLabel}
+              activeMessages={activeMessages}
+              isAnswering={isAnswering}
+              chatInput={chatInput}
+              onChatInputChange={(e) => setChatInput(e.target.value)}
+              onSendMessage={handleSendMessage}
+              activeQuestionCount={activeQuestionCount}
+            />
           )}
         </div>
       </div>
+
+      {/* P3-05 Toast Component Integration */}
+      <Toast message={toastMessage} type={toastType} onClose={() => setToastMessage(null)} />
     </div>
   );
 }
