@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import api from '../api/client'; // Import our centralized API client
+import api from '../api/client';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -10,28 +9,26 @@ export default function Login() {
   const [totpCode, setTotpCode] = useState('');
   const [requires2FA, setRequires2FA] = useState(false);
   const [preAuthToken, setPreAuthToken] = useState('');
-  const [setupRequired, setSetupRequired] = useState(false);
-  const [qrCodeUrl, setQrCodeUrl] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    setError('');
     try {
       const payload = requires2FA 
         ? { pre_auth_token: preAuthToken, totp_code: totpCode }
         : { username, password };
 
-      const response = await axios.post('http://127.0.0.1:8000/api/login/', payload, {
-        withCredentials: true
-      });
+      const response = await api.post('/api/login/', payload);
 
       if (response.data.requires_2fa) {
         setRequires2FA(true);
         setPreAuthToken(response.data.pre_auth_token);
+        setMessage(response.data.message);
       } else {
-        // Successful login
+        // ✅ FIXED: Successfully logged in with or without 2FA -> Go straight to dashboard!
         navigate('/dashboard');
       }
     } catch (err) {
@@ -90,13 +87,6 @@ export default function Login() {
                 {message || "Two-Factor Authentication required."}
               </div>
 
-              {setupRequired && qrCodeUrl && (
-                <div className="flex flex-col items-center justify-center p-4 bg-white rounded-2xl shadow-md my-2">
-                  <img src={qrCodeUrl} alt="2FA QR Code" className="w-40 h-40 object-contain mb-2" />
-                  <span className="text-[11px] text-gray-600 font-medium">Scan with Google Authenticator or Authy</span>
-                </div>
-              )}
-
               <div>
                 <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Authenticator Code (6 digits)</label>
                 <input 
@@ -122,10 +112,6 @@ export default function Login() {
 
         <div className="text-center mt-6 text-xs text-gray-400">
           Don't have an account? <span onClick={() => navigate('/signup')} className="text-rose-500 hover:underline cursor-pointer font-semibold">Sign up</span>
-        </div>
-
-        <div className="text-center mt-3 text-xs text-gray-500">
-          Having trouble? <a href="mailto:support@onesmarter.com" className="text-rose-400 hover:underline">Contact Support</a>
         </div>
       </div>
     </div>

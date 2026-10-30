@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api/client';
 import { QRCodeSVG } from 'qrcode.react';
 import { useNavigate } from 'react-router-dom';
 
@@ -12,10 +12,7 @@ export default function TwoFactorSetup() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // FIXED: Use withCredentials: true to send HttpOnly cookies instead of localStorage
-   axios.post('http://127.0.0.1:8000/api/auth/2fa/setup/', {}, {
-      withCredentials: true
-    })
+    api.post('/api/auth/2fa/setup/')
       .then(response => {
         setOtpauthUrl(response.data.totp_uri);
         setLoading(false);
@@ -31,17 +28,14 @@ export default function TwoFactorSetup() {
     e.preventDefault();
     setError('');
     try {
-      // FIXED: Use withCredentials: true instead of localStorage token header
-      const response = await axios.post(
-     'http://127.0.0.1:8000/api/auth/2fa/verify-enable/',
-        { totp_code: otpCode },
-        { withCredentials: true }
-      );
+      const response = await api.post('/api/auth/2fa/verify-enable/', { 
+        totp_code: otpCode 
+      });
       setSuccessMessage(response.data.message || "2FA enabled successfully!");
       
-      // Automatically redirect to login or dashboard after 1.5 seconds
+      // ✅ FIXED: Send them directly to the dashboard instead of throwing them back to login!
       setTimeout(() => {
-        navigate('/login');
+        navigate('/dashboard');
       }, 1500);
     } catch (err) {
       console.error("Verification error:", err);
@@ -96,12 +90,6 @@ export default function TwoFactorSetup() {
             Verify and Enable 2FA →
           </button>
         </form>
-
-        <div className="text-center mt-4">
-          <a href="/login" className="text-xs text-rose-600 hover:underline">
-            Already have an account? Sign in →
-          </a>
-        </div>
       </div>
     </div>
   );

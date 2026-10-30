@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import axios from 'axios';
-import { useNavigate, Link } from 'react-router-dom';
+import api from '../api/client';
+import { useNavigate } from 'react-router-dom';
 
 export default function Register() {
   const navigate = useNavigate();
@@ -9,112 +9,77 @@ export default function Register() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
-  const handleClose = () => {
-    navigate('/');
-  };
-
   const handleRegister = async (e) => {
     e.preventDefault();
     setError('');
-
     try {
-      // 1. Register the user (Django validates password here)
-      await axios.post('http://127.0.0.1:8000/api/register/', {
-        username,
-        email,
-        password
-      });
-
-      // 2. Automatically log them in to establish the secure session cookie
-      await axios.post('http://127.0.0.1:8000/api/login/', {
-        username,
-        password
-      }, { withCredentials: true });
-
-      // 3. Redirect new users directly to mandatory 2FA Setup onboarding
-      navigate('/2fa-setup');
-
+      // Calls the backend registration endpoint
+      await api.post('/api/register/', { username, email, password });
+      
+      // Successfully registered -> redirect user to login
+      navigate('/login');
     } catch (err) {
-      // P2-15: Handle server-side validation error array from Django cleanly
-      const serverError = err.response?.data?.error;
-      if (Array.isArray(serverError)) {
-        setError(serverError.join(' '));
+      const errData = err.response?.data;
+      if (typeof errData === 'object') {
+        setError(Object.values(errData).flat().join(' '));
       } else {
-        setError(serverError || "Registration failed. Please try a different username.");
+        setError("Registration failed. Please try again.");
       }
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-950 text-gray-100 p-4">
-      <div className="max-w-md w-full bg-gray-900 border border-gray-800 p-8 rounded-2xl shadow-2xl relative">
-        {/* Close Button */}
-        <button 
-          type="button"
-          onClick={handleClose}
-          className="absolute top-4 right-4 text-gray-400 hover:text-white text-lg font-bold p-1 transition cursor-pointer"
-          title="Back to Home"
-        >
-          ✕
-        </button>
+    <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white p-4">
+      <div className="max-w-md w-full bg-gray-900 border border-gray-800 p-8 rounded-3xl shadow-2xl">
+        <h2 className="text-2xl font-bold mb-1">Create an Account</h2>
+        <p className="text-xs text-gray-400 mb-6">Join MedLife.ai to manage your family health.</p>
 
-        <div className="text-center mb-6">
-          <div className="w-10 h-10 bg-rose-500/10 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-3 font-bold">
-            ❤️
-          </div>
-          <h2 className="text-2xl font-bold text-white mb-1">Join medlife.ai</h2>
-          <p className="text-xs text-gray-400">Create an account to securely track your family health metrics and chat with AI.</p>
-        </div>
-
-        {error && <p className="text-red-400 text-xs mb-4 text-center bg-red-950/50 p-2 rounded-lg">{error}</p>}
+        {error && <div className="mb-4 p-3 bg-red-950/50 border border-red-800 text-red-400 text-xs rounded-xl">{error}</div>}
 
         <form onSubmit={handleRegister} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold uppercase mb-1 text-gray-300">Username</label>
+            <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Username</label>
             <input 
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="Choose a username"
-              className="w-full px-3 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-rose-500"
-              required
+              type="text" 
+              value={username} 
+              onChange={(e) => setUsername(e.target.value)} 
+              className="w-full px-3 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-sm text-white focus:outline-none focus:border-rose-500" 
+              required 
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase mb-1 text-gray-300">Email address</label>
+            <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Email</label>
             <input 
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              className="w-full px-3 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-rose-500"
-              required
+              type="email" 
+              value={email} 
+              onChange={(e) => setEmail(e.target.value)} 
+              className="w-full px-3 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-sm text-white focus:outline-none focus:border-rose-500" 
+              required 
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase mb-1 text-gray-300">Password</label>
+            <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Password</label>
             <input 
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Create a password"
-              className="w-full px-3 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-rose-500"
-              required
+              type="password" 
+              value={password} 
+              onChange={(e) => setPassword(e.target.value)} 
+              className="w-full px-3 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-sm text-white focus:outline-none focus:border-rose-500" 
+              required 
             />
           </div>
 
           <button 
-            type="submit"
-            className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-lg transition duration-200 shadow-lg cursor-pointer"
+            type="submit" 
+            className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-sm rounded-xl shadow-lg transition cursor-pointer mt-2"
           >
-            Create Account & Setup 2FA →
+            Sign Up →
           </button>
         </form>
 
         <div className="text-center mt-6 text-xs text-gray-400">
-          Already have an account? <Link to="/login" className="text-rose-500 hover:underline font-semibold">Sign in</Link>
+          Already have an account? <span onClick={() => navigate('/login')} className="text-rose-500 hover:underline cursor-pointer font-semibold">Sign in</span>
         </div>
       </div>
     </div>
